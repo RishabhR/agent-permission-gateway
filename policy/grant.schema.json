@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "grant.schema.json",
+  "title": "Agent Permission Gateway - Grants and Manifests",
+  "description": "A Grant authorizes an agent to perform one scope (resource:verb) under optional constraints, for a bounded lifetime, with a pointer back to the user text that created it. Missing constraint = unconstrained within that scope. Principals are case-insensitive; '@domain' matches any address at that domain. Constraint applicability per scope is enforced in code (see 'x-applies-to').",
+  "$ref": "#/$defs/Grant",
+
+  "$defs": {
+    "Scope": {
+      "type": "string",
+      "enum": ["email:read", "email:send", "calendar:read", "calendar:write", "payments:purchase"],
+      "description": "Tool -> scope mapping: email_search, email_read -> email:read | email_send -> email:send | calendar_list -> calendar:read | calendar_create_event -> calendar:write | payments_purchase -> payments:purchase"
+    },
+
+    "Principal": {
+      "type": "string",
+      "pattern": "^([^@\\s]+@[^@\\s]+|@[^@\\s]+)$",
+      "description": "Full address (priya.shah@friends.example) or domain wildcard (@acme.example)."
+    },
+
+    "Window": {
+      "type": "object",
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" }
+      },
+      "required": ["start", "end"],
+      "additionalProperties": false,
+      "description": "calendar_list: requested range must sit inside the window. calendar_create_event: event start and end must sit inside the window."
+    },
+
+    "Constraints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "senders": {
+          "type": "array", "items": { "$ref": "#/$defs/Principal" },
+          "x-applies-to": ["email:read"],
+          "description": "email_read: message.from must match. email_search: results are FILTERED to these senders (least privilege: the agent never sees the others)."
+        },
+        "message_ids": {
+          "type": "array", "items": { "type": "string" },
+          "x-applies-to": ["email:read"]
+        },
+        "recipients": {
+          "type": "array", "items": { "$ref": "#/$defs/Principal" },
+          "x-applies-to": ["email:send"],
+          "description": "Every address in to + cc must match."
+        },
+        "window": {
+          "$ref": "#/$defs/Window",
+          "x-applies-to": ["calendar:read", "calendar:write"]
+        },
+        "attendees": {
+          "type": "array", "items": { "$ref": "#/$defs/Principal" },
+          "x-applies-to": ["calendar:write"],
+          "description": "Every attendee must match. Empty array = event may have no attendees."
+        },
+        "merchants": {
+          "type": "array", "items": { "type": "string" },
+          "x-applies-to": ["payments:purchase"],
+          "description": "Merchant hostnames, exact match (bookshop.example)."
+        },
+        "max_amount_usd": {
+          "type": "number", "exclusiveMinimum": 0,
+          "x-applies-to": ["payments:purchase"]
+        }
+      }
+    },
+
+    "Lifetime": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["task", "session", "standing"],
+          "description": "task: dies when the current user turn ends. session: survives across turns in one conversation. standing: never expires."
+        },
+        "task_id": { "type": "string" },
+        "session_id": { "type": "string" },
+        "expires_at": { "type": ["string", "null"], "format": "date-time" }
+      },
+      "required": ["type"],
+      "additionalProperties": false
+    },
+
+    "Provenance": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": ["user_message", "user_approval", "policy_default"],
+          "description": "user_message: minted from a manifest the user approved. user_approval: minted from an approved escalation (one-shot). policy_default: static grant from policies.yaml."
+        },
+        "message_ref": { "type": "string", "description": "e.g. 'T15/turn1'" },
+        "user_text_excerpt": {
+          "type": "string",
+          "description": "Verbatim span of USER-AUTHORED text that justifies the grant. Never from tool output."
+        },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["source", "created_at"],
+      "additionalProperties": false
+    },
+
+    "Grant": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^g_[a-z0-9_]+$" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "constraints": { "$ref": "#/$defs/Constraints" },
+        "lifetime": { "$ref": "#/$defs/Lifetime" },
+        "max_uses": { "type": ["integer", "null"], "minimum": 1, "description": "null = unlimited" },
+        "uses": { "type": "integer", "minimum": 0, "default": 0 },
+        "provenance": { "$ref": "#/$defs/Provenance" },
+        "rationale": { "type": "string" }
+      },
+      "required": ["id", "scope", "lifetime", "provenance"],
+      "additionalProperties": false
+    },
+
+    "ProposedGrant": {
+      "type": "object",
+      "description": "What the planner emits. The gateway assigns id, lifetime and provenance.",
+      "properties": {
+        "scope": { "$ref": "#/$defs/Scope" },
+        "constraints": { "$ref": "#/$defs/Constraints" },
+        "max_uses": { "type": ["integer", "null"], "minimum": 1 },
+        "user_text_excerpt": {
+          "type": "string",
+          "description": "PROVENANCE RULE: must be an exact substring of the user's message. Gateway drops the grant and logs provenance_violation otherwise."
+        },
+        "rationale": { "type": "string", "maxLength": 200 }
+      },
+      "required": ["scope", "user_text_excerpt", "rationale"],
+      "additionalProperties": false
+    },
+
+    "GrantManifest": {
+      "type": "object",
+      "description": "Planner output for one user turn. Shown to the user as a single approval prompt (if non-empty).",
+      "properties": {
+        "grants": { "type": "array", "items": { "$ref": "#/$defs/ProposedGrant" } },
+        "unresolved": {
+          "type": "array", "items": { "type": "string" },
+          "description": "Things the planner could not pin down from user text alone (e.g. 'merchant for Dad's gift unknown'). Logged for the write-up."
+        }
+      },
+      "required": ["grants"],
+      "additionalProperties": false
+    },
+
+    "Decision": {
+      "type": "object",
+      "description": "One audit-log line per tool call.",
+      "properties": {
+        "ts": { "type": "string", "format": "date-time" },
+        "run_id": { "type": "string" },
+        "policy": { "type": "string" },
+        "task_id": { "type": "string" },
+        "turn": { "type": "integer" },
+        "tool": { "type": "string" },
+        "args": { "type": "object" },
+        "derived": { "type": "object", "description": "Enriched fields used for matching, e.g. {from: ...} for email_read, {recipients: [...]} for email_send" },
+        "scope": { "$ref": "#/$defs/Scope" },
+        "outcome": { "type": "string", "enum": ["allowed", "denied", "escalated_approved", "escalated_denied"] },
+        "grant_id": { "type": ["string", "null"] },
+        "reasons": { "type": "array", "items": { "type": "string" }, "description": "Why each candidate grant did or didn't match, e.g. 'g_003: recipient dev.k@other.example not in [priya.shah@friends.example]'" }
+      },
+      "required": ["ts", "run_id", "policy", "task_id", "turn", "tool", "args", "scope", "outcome", "reasons"]
+    }
+  }
+}
