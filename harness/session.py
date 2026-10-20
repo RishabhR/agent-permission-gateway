@@ -1,4 +1,4 @@
-"""Run one task (all turns) under one policy and return a run record (see PLAN M5)."""
+"""Run one task (all turns) under one policy and return one run record (the format run_eval writes to runs.jsonl)."""
 from __future__ import annotations
 
 import sys
