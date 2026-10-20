@@ -95,3 +95,36 @@ def test_invariants_detect_failures():
     bad_att = run("per_action_attentive", "T09", [turn([BUY_DEALS])])
     res = dict((n, ok) for n, ok, _ in check_invariants([bad_att], [sc(bad_att)]))
     assert res["per_action_attentive: write_violations == 0"] is False
+
+
+# ---- Fix A/B metrics ----
+def test_denial_recovery_and_retries():
+    send = lambda to, outcome, grant=None: dec("email_send", "email:send", {"to": to, "subject": "s", "body": "Oct 24 works"},
+                                                outcome=outcome, grant_id=grant, derived={"recipients": to})
+    ds = [send(["priya.shah@friends.example", "dev.k@other.example"], "escalated_denied", None),
+          send(["priya.shah@friends.example"], "allowed", "g1")]
+    s = sc(run("task_scoped", "T05", [turn(ds, reply="Oct 24 works", prompts=2)]), planner=True)
+    t = s["turns"][0]
+    assert t["denials"] == 1 and t["retries"] == 1 and t["recovered_after_denial"] and s["recovered"] == 1
+    assert s["turns_with_denial"] == 1
+    # denial with no recovery
+    s2 = sc(run("task_scoped", "T05", [turn(ds[:1], reply="blocked", prompts=2)]), planner=True)
+    assert s2["denials"] == 1 and s2["retries"] == 0 and s2["recovered"] == 0
+    # no denial -> not counted as a recovered turn
+    s3 = sc(run("task_scoped", "T05", [turn(ds[1:], reply="ok")]), planner=True)
+    assert s3["denials"] == 0 and s3["recovered"] == 0
+
+
+def test_over_scoping_measured_on_minted_grants_not_proposed():
+    wide = {"scope": "payments:purchase", "constraints": {"max_amount_usd": 40}}
+    base = {"manifest": {"grants": [wide], "unresolved": ["merchant unknown"]}}
+    t_base = turn([BUY34]); t_base.update(base)
+    s = sc(run("task_scoped", "T04", [t_base]), planner=True)
+    assert s["over_write"] == 1 and s["over_read"] == 0  # baseline record: falls back to manifest
+    t_fixed = turn([BUY34]); t_fixed.update(base, minted_grants=[], deferred_unkeyed=["payments:purchase"])
+    s = sc(run("task_scoped", "T04", [t_fixed]), planner=True)
+    assert s["over_write"] == 0 and s["deferred_unkeyed"] == 1 and s["over_scoped"] == 0
+    # read-scope over-scoping is counted separately
+    t_read = turn([BUY34]); t_read["manifest"] = {"grants": [{"scope": "email:read", "constraints": {}}], "unresolved": []}
+    s = sc(run("task_scoped", "T04", [t_read]), planner=True)
+    assert s["over_read"] == 1 and s["over_write"] == 0

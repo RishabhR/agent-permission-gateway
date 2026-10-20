@@ -49,11 +49,14 @@ def run_task(client: anthropic.Anthropic, policy_name: str, task: dict[str, Any]
             "manifest": manifest.model_dump(mode="json") if manifest else None,
             "planner": planner_info,
             "minted": start.minted, "provenance_dropped": start.dropped,
+            "deferred_unkeyed": start.deferred, "minted_grants": start.minted_grants,
             "decisions": [d.model_dump(mode="json") for d in audit.decisions[n_before:]],
             "final_reply": res.final_reply, "stop_reason": res.stop_reason, "hit_call_cap": res.hit_call_cap,
             "prompts": gw.turn_prompts,
         })
-    return {"run_id": run_id, "policy": policy_name, "task_id": task["id"], "repeat": repeat,
+    flags = {"defer_unkeyed_writes": cfg.get("defer_unkeyed_writes", False),
+             "denial_style": cfg.get("denial_style", "terminal")}
+    return {"run_id": run_id, "policy": policy_name, "task_id": task["id"], "repeat": repeat, "flags": flags,
             "turns": turns, "world_after": world.state(), "audit_events": audit.events}
 
 

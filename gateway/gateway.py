@@ -26,11 +26,30 @@ class ToolResult:
 class TurnStart:
     minted: list[str] = field(default_factory=list)
     dropped: list[str] = field(default_factory=list)  # provenance violations
+    deferred: list[str] = field(default_factory=list)  # Fix A: write grants dropped for a missing key constraint
+    minted_grants: list[dict[str, Any]] = field(default_factory=list)  # the proposed grants actually minted
     prompts: int = 0
 
 
+# Fix A: the constraint that "keys" each write scope. Constraint present (even `[]`) = keyed.
+WRITE_KEY_CONSTRAINT = {"email:send": "recipients", "payments:purchase": "merchants",
+                        "calendar:write": "attendees"}
+
+
+DENIAL_STYLES = ("terminal", "recoverable")
+
+
 def denial_message(reason: str) -> str:
+    """Terminal style (baseline): byte-identical to the original text."""
     return f"PERMISSION_DENIED: {reason}. Do not retry; tell the user what you need permission for."
+
+
+def recoverable_denial_message(reason: str, scope: str, capabilities: list[str]) -> str:
+    """Fix B: same for every policy; shows the live permissions for the denied scope."""
+    have = "; ".join(capabilities) if capabilities else "none"
+    return (f"PERMISSION_DENIED: {reason}. Your current permissions for {scope}: {have}. "
+            "You may retry with arguments inside these permissions, or tell the user what additional "
+            "permission you need.")
 
 
 class Gateway:
@@ -38,6 +57,9 @@ class Gateway:
                  approver: Approver, audit: AuditLog, run_id: str = "run"):
         self.world, self.policy_name, self.cfg = world, policy_name, policy_cfg
         self.approver, self.audit, self.run_id = approver, audit, run_id
+        style = policy_cfg.get("denial_style", "terminal")
+        if style not in DENIAL_STYLES:
+            raise ValueError(f"denial_style must be one of {DENIAL_STYLES}, got {style!r}")
         self.grants: list[Grant] = static_grants(policy_name, policy_cfg, world.now.isoformat())
         self.ctx: Ctx | None = None
         self.turn = 0
@@ -59,8 +81,17 @@ class Gateway:
                                      scope=pg.scope, user_text_excerpt=pg.user_text_excerpt)
                     start.dropped.append(pg.user_text_excerpt)
                     continue
+                key = WRITE_KEY_CONSTRAINT.get(pg.scope)
+                if self.cfg.get("defer_unkeyed_writes", False) and key and getattr(pg.constraints, key) is None:
+                    # Fix A: don't widen. The call escalates later, when concrete args are known.
+                    self.audit.event("deferred_unkeyed", run_id=self.run_id, task_id=task_id, turn=turn,
+                                     scope=pg.scope, missing=key, rationale=pg.rationale,
+                                     unresolved=list(manifest.unresolved))
+                    start.deferred.append(pg.scope)
+                    continue
                 start.minted.append(self._mint_from_manifest(pg, task_id, session_id, turn, user_text))
-            if start.minted:  # manifest approved as proposed: one prompt
+                start.minted_grants.append(pg.model_dump(mode="json", exclude_none=True))
+            if start.minted:  # the (post-drop) manifest shown for approval: one prompt
                 self._prompt()
         start.prompts = self.turn_prompts
         return start
@@ -135,7 +166,11 @@ class Gateway:
             self._log(action, outcome, grant_id, reasons, ok)
             return ToolResult(content)
         self._log(action, outcome, grant_id, reasons, None)
-        return ToolResult(denial_message(result.reasons[0]), is_error=True)
+        if self.cfg.get("denial_style", "terminal") == "recoverable":
+            msg = recoverable_denial_message(result.reasons[0], action.scope, self.capabilities(action.scope))
+        else:
+            msg = denial_message(result.reasons[0])
+        return ToolResult(msg, is_error=True)
 
     def _execute(self, action: Action, search_grant: str | None) -> str:
         if action.tool == "email_search":
@@ -172,11 +207,14 @@ class Gateway:
             outcome=outcome, grant_id=grant_id, reasons=reasons, executed_ok=executed_ok))  # type: ignore[arg-type]
 
     # ---- "what can my agent do right now" ----
-    def capabilities(self) -> list[str]:
+    def capabilities(self, scope: str | None = None) -> list[str]:
+        """Plain-language live grants, optionally only for one scope."""
         if self.ctx is None:
             raise RuntimeError("begin_turn() must be called first")
         out = []
         for g in self.grants:
+            if scope is not None and g.scope != scope:
+                continue
             lt = g.lifetime
             if lt.expires_at is not None and self.world.now >= lt.expires_at:
                 continue
