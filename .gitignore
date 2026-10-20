@@ -5,3 +5,5 @@ results/*.log
 state/
 .env
 .DS_Store
+CLAUDE.md
+PLAN.md
