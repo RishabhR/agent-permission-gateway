@@ -98,3 +98,6 @@ the fix failed to do what it says. Both are reported with numbers.
    anticipated in limit 5.
 4. Results: `results/v2/summary.md` (script: `python -m harness.compare`). Raw runs:
    `results/v2/runs_baseline.jsonl`, `results/v2/runs_v2.jsonl`.
+
+## Deviations
+- Commit history: this file was drafted and reviewed before any v2 run, but it was committed together with the results (commit 79e397d), so git history alone does not show the order.

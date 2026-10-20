@@ -6,6 +6,7 @@ return a world error (executed_ok is not False).
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -309,11 +310,19 @@ def score_file(path: Path) -> tuple[str, list[tuple[str, bool, str]]]:
     return render(scored, invariants, repeats), invariants
 
 
+class _Parser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:  # keep the original exit code (1) for bad arguments
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
+
+
 def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 1:
-        raise SystemExit("usage: python -m harness.score results/runs.jsonl")
-    path = Path(argv[0])
+    ap = _Parser(prog="python -m harness.score",
+                 description="Score a runs JSONL file and write the summary next to it "
+                             "(runs.jsonl -> summary.md, runs_haiku.jsonl -> summary_haiku.md). "
+                             "Exits 1 if any sanity invariant fails.")
+    ap.add_argument("path", type=Path, help="runs file, e.g. results/runs.jsonl")
+    path = ap.parse_args(sys.argv[1:] if argv is None else argv).path
     text, invariants = score_file(path)
     # runs.jsonl -> summary.md; runs_haiku.jsonl -> summary_haiku.md (don't clobber the main summary)
     suffix = path.stem.removeprefix("runs")
