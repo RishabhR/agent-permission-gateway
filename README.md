@@ -6,13 +6,24 @@ mock world (fake inbox, calendar, and merchants); no real accounts are involved.
 
 ## Why
 
-<!-- TODO: add links to the reporting on consumer agents going mainstream and the permission complaints
-     (consent the user forgot they gave, reading more than asked, not identifying to third-party sites). -->
-Consumer agents have gone mainstream, and many of the early complaints are permission problems rather
-than model problems: agents acting on consent the user forgot they gave, reading more than they were
-asked to, and acting on third-party sites without saying who they are. This project asks which
-permission design gives the best tradeoff between blocking unwanted actions, letting legitimate tasks
-succeed, and not burying the user in prompts.
+Consumer agents have gone mainstream: Meta launched its Muse agent this fall
+([TechCrunch](https://techcrunch.com/2026/09/08/meta-debuts-its-muse-ai-agent-will-consumers-trust-it/),
+[CNN](https://www.cnn.com/2026/09/23/tech/meta-muse-ai-agent)). Many of the early complaints are
+permission problems rather than model problems. One YouTuber reported that Muse gave his address to a
+Facebook Marketplace buyer after he clicked a button
+([Business Insider via Yahoo](https://tech.yahoo.com/ai/meta-ai/articles/youtuber-says-muse-setting-led-122153415.html);
+analysis of what an "Allow Always" setting authorizes:
+[Redreamality](https://redreamality.com/blog/meta-muse-allow-always-agent-permission-defaults/)). A
+reporter said the agent referred to confidential messages it wasn't granted access to
+([Tom's Hardware](https://www.tomshardware.com/tech-industry/artificial-intelligence/metas-muse-ai-agent-accused-of-accessing-sensitive-user-data-on-iphone-and-mac-without-permission-agent-shocks-reporter-by-referring-to-confidential-messages-it-wasnt-granted-access-to)),
+which Meta disputes
+([TechCrunch](https://techcrunch.com/2026/09/30/meta-disputes-claim-that-muse-read-a-users-private-messages-without-permission/)).
+And Amazon blocked the assistant from its site
+([GeekWire](https://www.geekwire.com/2026/amazon-blocks-metas-muse-ai-assistant-in-new-standoff-over-agentic-shopping/)).
+The themes are consent the user forgot they gave, reading more than was asked, and acting on
+third-party sites in ways those sites can't govern. This project asks which permission design gives the
+best tradeoff between blocking unwanted actions, letting legitimate tasks succeed, and not burying the
+user in prompts. These are news reports of individual incidents, several disputed, not measurements.
 
 ## Design
 
@@ -145,6 +156,10 @@ uv run python -m harness.run_eval --policies task_scoped --tasks T15  # single s
 uv run python -m harness.score results/runs.jsonl                     # -> results/summary.md
 AGENT_MODEL=claude-haiku-5-5 uv run python -m harness.run_eval --out results/runs_haiku.jsonl
 ```
+
+To browse runs, open `viewer/index.html` in a browser (no build step, nothing leaves your machine) and
+choose one or more `runs*.jsonl` files. Each tool call is colored by outcome, hover a row for the reasons,
+click it for full args, and filter by policy, task, or runs with a denial or escalation.
 
 Model IDs come from `AGENT_MODEL` and `PLANNER_MODEL` (default `claude-sonnet-5-5`). Runs are resumable.
 Estimated (not measured) at roughly $15 for the full Sonnet grid at one repeat.

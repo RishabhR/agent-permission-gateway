@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Permission Gateway: run viewer</title>
+<style>
+  :root {
+    --bg: #fafafa; --panel: #fff; --text: #1b1f24; --muted: #667085; --line: #e3e6ea;
+    --allowed: #e6f4ea; --allowed-fg: #1e6b34;
+    --denied: #fdeaea; --denied-fg: #a12622;
+    --approved: #fff4d6; --approved-fg: #8a5a00;
+    --declined: #fbe3d3; --declined-fg: #9a3b0b;
+    --accent: #2f5fd0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --panel: #1c1f24; --text: #e8eaed; --muted: #9aa3ad; --line: #30353c;
+      --allowed: #17301f; --allowed-fg: #7fd69a;
+      --denied: #3a1b1b; --denied-fg: #ff9b95;
+      --approved: #3a2f12; --approved-fg: #f1c76a;
+      --declined: #3b2314; --declined-fg: #ffac80;
+      --accent: #8aa8ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px;
+           background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header label { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; }
+  select, input[type=text] { font: inherit; padding: 3px 6px; background: var(--bg); color: var(--text);
+                             border: 1px solid var(--line); border-radius: 4px; }
+  #count { color: var(--muted); margin-left: auto; }
+  main { display: grid; grid-template-columns: 340px 1fr; min-height: calc(100vh - 52px); }
+  #list { border-right: 1px solid var(--line); overflow-y: auto; max-height: calc(100vh - 52px);
+          position: sticky; top: 52px; background: var(--panel); }
+  .run { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .run:hover { background: var(--bg); }
+  .run.sel { background: var(--bg); box-shadow: inset 3px 0 var(--accent); }
+  .run .id { font-weight: 600; word-break: break-all; }
+  .run .meta { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill { padding: 0 6px; border-radius: 9px; font-size: 11px; font-weight: 600; }
+  .pill.allowed { background: var(--allowed); color: var(--allowed-fg); }
+  .pill.denied { background: var(--denied); color: var(--denied-fg); }
+  .pill.escalated_approved { background: var(--approved); color: var(--approved-fg); }
+  .pill.escalated_denied { background: var(--declined); color: var(--declined-fg); }
+  .pill.prompts { background: var(--line); color: var(--text); }
+  #detail { padding: 16px 24px; max-width: 1100px; min-width: 0; }
+  .tablewrap { overflow-x: auto; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+    #list { position: static; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    #detail { padding: 12px; }
+  }
+  #empty { color: var(--muted); padding: 40px; text-align: center; }
+  h2 { font-size: 16px; margin: 0 0 4px; }
+  h3 { font-size: 13px; margin: 18px 0 6px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .turn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px 14px; margin: 12px 0; }
+  .user { font-weight: 600; }
+  .reply { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { text-align: left; padding: 4px 8px; vertical-align: top; border-top: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; border-top: 0; }
+  tr.d { cursor: pointer; }
+  tr.d.allowed td:nth-child(4) { background: var(--allowed); color: var(--allowed-fg); font-weight: 600; }
+  tr.d.denied td:nth-child(4) { background: var(--denied); color: var(--denied-fg); font-weight: 600; }
+  tr.d.escalated_approved td:nth-child(4) { background: var(--approved); color: var(--approved-fg); font-weight: 600; }
+  tr.d.escalated_denied td:nth-child(4) { background: var(--declined); color: var(--declined-fg); font-weight: 600; }
+  tr.d.noeffect td:nth-child(2)::after { content: " (world error)"; color: var(--muted); }
+  tr.more td { background: var(--bg); }
+  tr.more pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; }
+  .args { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-word; }
+  .grant { font-family: ui-monospace, monospace; font-size: 12px; }
+  ul.clean { margin: 4px 0; padding-left: 18px; }
+  .muted { color: var(--muted); }
+  .warn { color: var(--denied-fg); }
+  code { font-family: ui-monospace, monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Run viewer</h1>
+  <label>runs.jsonl <input id="file" type="file" accept=".jsonl,.json,.txt" multiple></label>
+  <label>Policy <select id="policy"><option value="">all</option></select></label>
+  <label>Task <input id="task" type="text" placeholder="e.g. T15" size="6"></label>
+  <label>Show
+    <select id="only">
+      <option value="">all runs</option>
+      <option value="gated">runs with a denial or escalation</option>
+      <option value="denied">runs with a denial</option>
+      <option value="escalated">runs with an escalation</option>
+    </select>
+  </label>
+  <span id="count"></span>
+</header>
+<main>
+  <nav id="list"></nav>
+  <section id="detail"><div id="empty">Load <code>results/runs.jsonl</code> to begin. Nothing leaves your browser.</div></section>
+</main>
+
+<script>
+"use strict";
+const OUTCOMES = ["allowed", "denied", "escalated_approved", "escalated_denied"];
+const LABEL = { allowed: "allowed", denied: "denied", escalated_approved: "escalated: approved", escalated_denied: "escalated: declined" };
+let runs = [];
+let selected = null;
+
+// Build DOM without innerHTML: log content (email text, args) is untrusted.
+function el(tag, props, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (k === "class") n.className = v; else if (k === "title") n.title = v; else n.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) n.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return n;
+}
+
+function parseJsonl(text) {
+  const out = [];
+  text.split("\n").forEach((line, i) => {
+    if (!line.trim()) return;
+    try { out.push(JSON.parse(line)); }
+    catch (e) { throw new Error("line " + (i + 1) + " is not valid JSON: " + e.message); }
+  });
+  return out;
+}
+
+function multiSource() { return new Set(runs.map(r => r._src)).size > 1; }
+function decisionsOf(run) { return run.turns.flatMap(t => t.decisions); }
+function counts(run) {
+  const c = Object.fromEntries(OUTCOMES.map(o => [o, 0]));
+  for (const d of decisionsOf(run)) c[d.outcome] = (c[d.outcome] || 0) + 1;
+  return c;
+}
+function totalPrompts(run) { return run.turns.reduce((s, t) => s + (t.prompts || 0), 0); }
+
+function loadText(text, src = "") {
+  const parsed = parseJsonl(text);
+  for (const r of parsed) if (!r.run_id || !Array.isArray(r.turns)) throw new Error("record missing run_id/turns");
+  if (src) parsed.forEach(r => { r._src = src; });
+  runs = parsed;
+  runs.sort((a, b) => a.task_id.localeCompare(b.task_id) || a.policy.localeCompare(b.policy) ||
+                      a.repeat - b.repeat || (a._src || "").localeCompare(b._src || ""));
+  const sel = document.getElementById("policy"), cur = sel.value;
+  sel.replaceChildren(el("option", { value: "" }, "all"),
+    ...[...new Set(runs.map(r => r.policy))].sort().map(p => el("option", { value: p }, p)));
+  sel.value = cur;
+  selected = null;
+  renderList();
+  document.getElementById("detail").replaceChildren(el("div", { id: "empty" }, "Select a run."));
+}
+
+function visible() {
+  const pol = document.getElementById("policy").value;
+  const task = document.getElementById("task").value.trim().toLowerCase();
+  const only = document.getElementById("only").value;
+  return runs.filter(r => {
+    if (pol && r.policy !== pol) return false;
+    if (task && !r.task_id.toLowerCase().includes(task)) return false;
+    const c = counts(r);
+    if (only === "denied" && c.denied + c.escalated_denied === 0) return false;
+    if (only === "escalated" && c.escalated_approved + c.escalated_denied === 0) return false;
+    if (only === "gated" && c.denied + c.escalated_approved + c.escalated_denied === 0) return false;
+    return true;
+  });
+}
+
+function renderList() {
+  const list = visible();
+  document.getElementById("count").textContent = list.length + " of " + runs.length + " runs";
+  const nav = document.getElementById("list");
+  nav.replaceChildren(...list.map(r => {
+    const c = counts(r);
+    const pills = OUTCOMES.filter(o => c[o]).map(o =>
+      el("span", { class: "pill " + o, title: LABEL[o] }, c[o]));
+    const p = totalPrompts(r);
+    const row = el("div", { class: "run" + (r === selected ? " sel" : ""), tabindex: "0" },
+      el("div", { class: "id" }, r.task_id + "  ·  " + r.policy),
+      multiSource() ? el("div", { class: "muted" }, r._src) : null,
+      el("div", { class: "meta" }, ...pills, el("span", { class: "pill prompts", title: "approval prompts" }, p + (p === 1 ? " prompt" : " prompts")),
+        r.repeat ? el("span", {}, "repeat " + r.repeat) : null));
+    const pick = () => { selected = r; renderList(); renderDetail(r); };
+    row.addEventListener("click", pick);
+    row.addEventListener("keydown", e => { if (e.key === "Enter") pick(); });
+    return row;
+  }));
+}
+
+function constraintText(cons) {
+  const set = Object.entries(cons || {}).filter(([, v]) => v !== null && v !== undefined);
+  return set.length ? set.map(([k, v]) => k + "=" + JSON.stringify(v)).join("  ") : "(no constraints)";
+}
+
+function argsText(d) {
+  const a = Object.assign({}, d.args);
+  if (typeof a.body === "string" && a.body.length > 60) a.body = a.body.slice(0, 57) + "...";
+  return JSON.stringify(a);
+}
+
+function decisionRows(t) {
+  if (!t.decisions.length) return [el("tr", {}, el("td", { colspan: "6", class: "muted" }, "no tool calls"))];
+  const rows = [];
+  t.decisions.forEach((d, i) => {
+    const noEffect = d.executed_ok === false;
+    const tr = el("tr", { class: "d " + d.outcome + (noEffect ? " noeffect" : ""), tabindex: "0",
+                          title: (d.reasons || []).join("\n") || "(no reasons)" },
+      el("td", {}, i + 1), el("td", {}, d.tool), el("td", { class: "args" }, argsText(d)),
+      el("td", {}, LABEL[d.outcome] || d.outcome), el("td", { class: "grant" }, d.grant_id || "none"));
+    const more = el("tr", { class: "more", hidden: "" }, el("td", { colspan: "5" }, el("pre", {},
+      "reasons:\n" + (d.reasons || []).map(r => "  - " + r).join("\n") +
+      "\n\nfull args:\n" + JSON.stringify(d.args, null, 2) +
+      "\n\nderived: " + JSON.stringify(d.derived || {}) + "\nscope: " + d.scope)));
+    const toggle = () => { more.hidden = !more.hidden; };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", e => { if (e.key === "Enter") toggle(); });
+    rows.push(tr, more);
+  });
+  return rows;
+}
+
+function renderDetail(r) {
+  const root = document.getElementById("detail");
+  const parts = [el("h2", {}, r.run_id),
+    el("div", { class: "muted" }, (r._src ? r._src + " · " : "") + "policy " + r.policy + " · task " + r.task_id + " · repeat " + r.repeat +
+      " · " + totalPrompts(r) + " prompt(s) total")];
+  r.turns.forEach((t, i) => {
+    const kids = [el("div", { class: "muted" }, "Turn " + (i + 1) + " · " + (t.prompts || 0) + " prompt(s)" +
+        (t.stop_reason && t.stop_reason !== "end_turn" ? " · stop_reason=" + t.stop_reason : "") +
+        (t.hit_call_cap ? " · hit tool-call cap" : "")),
+      el("div", { class: "user" }, "User: " + t.user)];
+    if (t.manifest) {
+      kids.push(el("h3", {}, "Planner manifest"));
+      kids.push(t.manifest.grants.length
+        ? el("ul", { class: "clean" }, ...t.manifest.grants.map(g => el("li", {},
+            el("b", {}, g.scope), " ", el("span", { class: "grant" }, constraintText(g.constraints)),
+            g.max_uses ? " max_uses=" + g.max_uses : "",
+            el("div", { class: "muted" }, "you said: “" + g.user_text_excerpt + "”"))))
+        : el("div", { class: "muted" }, "empty manifest (no grants proposed)"));
+      if ((t.manifest.unresolved || []).length)
+        kids.push(el("div", { class: "muted" }, "unresolved:"),
+          el("ul", { class: "clean" }, ...t.manifest.unresolved.map(u => el("li", {}, u))));
+      if (t.planner && t.planner.error) kids.push(el("div", { class: "warn" }, "planner error: " + t.planner.error));
+    }
+    if ((t.provenance_dropped || []).length)
+      kids.push(el("div", { class: "warn" }, "provenance violations dropped: " + t.provenance_dropped.map(x => JSON.stringify(x)).join(", ")));
+    kids.push(el("h3", {}, "Decisions (click a row for reasons)"),
+      el("div", { class: "tablewrap" }, el("table", {}, el("thead", {}, el("tr", {}, ...["#", "tool", "args", "outcome", "grant"].map(h => el("th", {}, h)))),
+        el("tbody", {}, ...decisionRows(t)))),
+      el("h3", {}, "Final reply"), el("div", { class: "reply" }, t.final_reply || "(empty)"));
+    parts.push(el("div", { class: "turn" }, ...kids));
+  });
+  const w = r.world_after || {};
+  parts.push(el("h3", {}, "World after"),
+    el("div", {}, "outbox: " + (w.outbox || []).length + " · orders: " + (w.orders || []).length +
+      " · calendar events added: " + (w.calendar_added || []).length),
+    el("pre", { class: "args" }, JSON.stringify(w, null, 2)));
+  if ((r.audit_events || []).length) parts.push(el("h3", {}, "Audit events"), el("pre", { class: "args" }, JSON.stringify(r.audit_events, null, 2)));
+  root.replaceChildren(...parts);
+  root.scrollTop = 0; window.scrollTo(0, 0);
+}
+
+document.getElementById("file").addEventListener("change", async e => {
+  try {
+    // Several files (e.g. Sonnet + Haiku runs) are merged; each record remembers its file name.
+    const files = [...e.target.files];
+    const texts = await Promise.all(files.map(f => f.text()));
+    const merged = [];
+    texts.forEach((t, i) => parseJsonl(t).forEach(r => merged.push({ ...r, _src: files[i].name })));
+    loadText(merged.map(r => JSON.stringify(r)).join("\n"));
+  } catch (err) {
+    document.getElementById("detail").replaceChildren(el("div", { id: "empty", class: "warn" }, "Could not load: " + err.message));
+  }
+});
+for (const id of ["policy", "task", "only"]) document.getElementById(id).addEventListener("input", renderList);
+window.loadText = loadText; // for tests / console use
+</script>
+</body>
+</html>
