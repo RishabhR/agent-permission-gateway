@@ -20,6 +20,23 @@ RESULTS = Path(__file__).resolve().parent.parent / "results" / "runs.jsonl"
 ATTEMPTS = 4
 
 
+FLAGS = {"defer_unkeyed_writes": {"true": True, "false": False},
+         "denial_style": {"terminal": "terminal", "recoverable": "recoverable"}}
+
+
+def parse_flags(arg: str) -> dict[str, Any]:
+    """'defer_unkeyed_writes=true,denial_style=recoverable' -> dict. Unknown keys/values fail loudly."""
+    out: dict[str, Any] = {}
+    for item in [a for a in arg.split(",") if a.strip()]:
+        key, _, val = item.partition("=")
+        key, val = key.strip(), val.strip().lower()
+        if key not in FLAGS or val not in FLAGS[key]:
+            raise SystemExit(f"bad --flags item {item!r}; allowed: "
+                             + ", ".join(f"{k}={'|'.join(v)}" for k, v in FLAGS.items()))
+        out[key] = FLAGS[key][val]
+    return out
+
+
 def select(arg: str, available: list[str], what: str) -> list[str]:
     if arg == "all":
         return available
@@ -58,10 +75,15 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--repeats", type=int, default=1)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--out", default=str(RESULTS))
+    ap.add_argument("--flags", default="", help="policy flags applied to every policy, e.g. "
+                    "defer_unkeyed_writes=true,denial_style=recoverable (policies.yaml is not modified)")
     args = ap.parse_args(argv)
     load_env()
 
     policies = load_policies()
+    flags = parse_flags(args.flags)
+    for cfg in policies.values():
+        cfg.update(flags)
     tasks = {t["id"]: t for t in load_tasks()}
     pol_names = select(args.policies, list(policies), "policy")
     task_ids = select(args.tasks, list(tasks), "task")
